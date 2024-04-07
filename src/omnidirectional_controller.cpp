@@ -100,13 +100,11 @@ InterfaceConfiguration OmnidirectionalController::state_interface_configuration(
   if (odom_params_.open_loop) { //return an empty configuration if "open loop" mode is activated.
     return {interface_configuration_type::NONE, {}};
   } 
-  else {
-    std::vector<std::string> conf_names;
-    for (const auto & joint_name : wheel_names_) {
-      conf_names.push_back(joint_name + "/" + HW_IF_VELOCITY);
-    }
-    return {interface_configuration_type::INDIVIDUAL, conf_names};
+  std::vector<std::string> conf_names;
+  for (const auto & joint_name : wheel_names_) {
+    conf_names.push_back(joint_name + "/" + HW_IF_VELOCITY);
   }
+  return {interface_configuration_type::INDIVIDUAL, conf_names};
 }
 
 CallbackReturn OmnidirectionalController::on_configure(
