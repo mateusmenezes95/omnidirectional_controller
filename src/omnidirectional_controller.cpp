@@ -97,11 +97,16 @@ InterfaceConfiguration OmnidirectionalController::command_interface_configuratio
 }
 
 InterfaceConfiguration OmnidirectionalController::state_interface_configuration() const {
-  std::vector<std::string> conf_names;
-  for (const auto & joint_name : wheel_names_) {
-    conf_names.push_back(joint_name + "/" + HW_IF_VELOCITY);
+  if (odom_params_.open_loop) { //return an empty configuration if "open loop" mode is activated.
+    return {interface_configuration_type::NONE, {}};
+  } 
+  else {
+    std::vector<std::string> conf_names;
+    for (const auto & joint_name : wheel_names_) {
+      conf_names.push_back(joint_name + "/" + HW_IF_VELOCITY);
+    }
+    return {interface_configuration_type::INDIVIDUAL, conf_names};
   }
-  return {interface_configuration_type::INDIVIDUAL, conf_names};
 }
 
 CallbackReturn OmnidirectionalController::on_configure(
@@ -213,13 +218,10 @@ CallbackReturn OmnidirectionalController::on_configure(
   return CallbackReturn::SUCCESS;
 }
 
-CallbackReturn OmnidirectionalController::on_activate(
-  const rclcpp_lifecycle::State & previous_state) {
+CallbackReturn OmnidirectionalController::on_activate(const rclcpp_lifecycle::State & previous_state) {
   auto logger = node_->get_logger();
 
-  RCLCPP_DEBUG(logger,
-    "Called on_activate. Previous state was %s",
-    previous_state.label().c_str());
+  RCLCPP_DEBUG(logger, "Called on_activate. Previous state was %s", previous_state.label().c_str());
 
   if (wheel_names_.empty()) {
     RCLCPP_ERROR(logger, "No wheel names specified");
@@ -229,34 +231,47 @@ CallbackReturn OmnidirectionalController::on_activate(
   // register handles
   registered_wheel_handles_.reserve(wheel_names_.size());
   for (const auto & wheel_name : wheel_names_) {
-    std::string interface_name = wheel_name + "/" + HW_IF_VELOCITY;
 
-    const auto state_handle = std::find_if(state_interfaces_.cbegin(), state_interfaces_.cend(),
-      [&interface_name](const auto & interface) {
-        return interface.get_name() == interface_name;
-      });
+    const hardware_interface::LoanedStateInterface* state_handle = nullptr;
 
-    if (state_handle == state_interfaces_.cend()) {
-      RCLCPP_ERROR(logger, "Unable to obtain joint state handle for %s", wheel_name.c_str());
-      return CallbackReturn::ERROR;
+    if (!odom_params_.open_loop) {
+      std::string interface_name = wheel_name + "/" + HW_IF_VELOCITY;
+
+      const auto state_handle_iterator = std::find_if(state_interfaces_.cbegin(), state_interfaces_.cend(),
+        [&interface_name](const auto & interface) {
+          return interface.get_name() == interface_name;
+        });
+
+      if (state_handle_iterator == state_interfaces_.cend()) {
+        RCLCPP_ERROR(logger, "Unable to obtain joint state handle for %s", wheel_name.c_str());
+        return CallbackReturn::ERROR;
+      }
+
+      // store a pointer to the state interface found
+      state_handle = &(*state_handle_iterator);
     }
 
-    const auto command_handle = std::find_if(
+    const auto& state_handle_ref = *state_handle; //store a constant reference to the interface found
+
+    const auto command_handle_iterator = std::find_if(
       command_interfaces_.begin(), command_interfaces_.end(),
-      [&interface_name](const auto & interface) {
+      [&wheel_name](const auto & interface) {
+        std::string interface_name = wheel_name + "/" + HW_IF_VELOCITY;
         return interface.get_name() == interface_name;
       });
 
-    if (command_handle == command_interfaces_.end()) {
+    if (command_handle_iterator == command_interfaces_.end()) {
       RCLCPP_ERROR(logger, "Unable to obtain joint command handle for %s", wheel_name.c_str());
       return CallbackReturn::ERROR;
     }
 
     registered_wheel_handles_.emplace_back(
-      WheelHandle{std::ref(*state_handle), std::ref(*command_handle)});
+      WheelHandle{state_handle_ref, std::ref(*command_handle_iterator)});
 
-    RCLCPP_INFO(logger, "Got command interface: %s", command_handle->get_name().c_str());
-    RCLCPP_INFO(logger, "Got state interface: %s", state_handle->get_name().c_str());
+    RCLCPP_INFO(logger, "Got command interface: %s", command_handle_iterator->get_name().c_str());
+    if (!odom_params_.open_loop) {
+      RCLCPP_INFO(logger, "Got state interface: %s", state_handle->get_name().c_str());
+    }
   }
 
   subscriber_is_active_ = true;
