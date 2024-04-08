@@ -100,11 +100,13 @@ InterfaceConfiguration OmnidirectionalController::state_interface_configuration(
   if (odom_params_.open_loop) { //return an empty configuration if "open loop" mode is activated.
     return {interface_configuration_type::NONE, {}};
   } 
-  std::vector<std::string> conf_names;
-  for (const auto & joint_name : wheel_names_) {
-    conf_names.push_back(joint_name + "/" + HW_IF_VELOCITY);
+  else {
+    std::vector<std::string> conf_names;
+    for (const auto & joint_name : wheel_names_) {
+      conf_names.push_back(joint_name + "/" + HW_IF_VELOCITY);
+    }
+    return {interface_configuration_type::INDIVIDUAL, conf_names};
   }
-  return {interface_configuration_type::INDIVIDUAL, conf_names};
 }
 
 CallbackReturn OmnidirectionalController::on_configure(
@@ -227,49 +229,45 @@ CallbackReturn OmnidirectionalController::on_activate(const rclcpp_lifecycle::St
   }
 
   // register handles
-  registered_wheel_handles_.reserve(wheel_names_.size());
+  registered_wheel_state_ifs_.reserve(wheel_names_.size());
+  registered_wheel_cmd_ifs_.reserve(wheel_names_.size());
   for (const auto & wheel_name : wheel_names_) {
-
-    const hardware_interface::LoanedStateInterface* state_handle = nullptr;
 
     if (!odom_params_.open_loop) {
       std::string interface_name = wheel_name + "/" + HW_IF_VELOCITY;
 
-      const auto state_handle_iterator = std::find_if(state_interfaces_.cbegin(), state_interfaces_.cend(),
+      const auto state_handle = std::find_if(state_interfaces_.cbegin(), state_interfaces_.cend(),
         [&interface_name](const auto & interface) {
           return interface.get_name() == interface_name;
-        });
+        }
+      );
 
-      if (state_handle_iterator == state_interfaces_.cend()) {
+      if (state_handle == state_interfaces_.cend()) {
         RCLCPP_ERROR(logger, "Unable to obtain joint state handle for %s", wheel_name.c_str());
         return CallbackReturn::ERROR;
       }
 
-      // store a pointer to the state interface found
-      state_handle = &(*state_handle_iterator);
+      registered_wheel_state_ifs_.emplace_back(*state_handle);
+
+      RCLCPP_INFO(logger, "Got state interface: %s", state_handle->get_name().c_str());
     }
 
-    const auto& state_handle_ref = *state_handle; //store a constant reference to the interface found
-
-    const auto command_handle_iterator = std::find_if(
+    const auto command_handle = std::find_if(
       command_interfaces_.begin(), command_interfaces_.end(),
       [&wheel_name](const auto & interface) {
         std::string interface_name = wheel_name + "/" + HW_IF_VELOCITY;
         return interface.get_name() == interface_name;
-      });
+      }
+    );
 
-    if (command_handle_iterator == command_interfaces_.end()) {
+    if (command_handle == command_interfaces_.end()) {
       RCLCPP_ERROR(logger, "Unable to obtain joint command handle for %s", wheel_name.c_str());
       return CallbackReturn::ERROR;
     }
 
-    registered_wheel_handles_.emplace_back(
-      WheelHandle{state_handle_ref, std::ref(*command_handle_iterator)});
+    registered_wheel_cmd_ifs_.emplace_back(*command_handle);
 
-    RCLCPP_INFO(logger, "Got command interface: %s", command_handle_iterator->get_name().c_str());
-    if (!odom_params_.open_loop) {
-      RCLCPP_INFO(logger, "Got state interface: %s", state_handle->get_name().c_str());
-    }
+    RCLCPP_INFO(logger, "Got command interface: %s", command_handle->get_name().c_str());
   }
 
   subscriber_is_active_ = true;
@@ -362,9 +360,9 @@ controller_interface::return_type OmnidirectionalController::update(
       period.seconds());
   } else {
     std::vector<double> wheels_angular_velocity({0, 0, 0});
-    wheels_angular_velocity[0] = registered_wheel_handles_[0].velocity_state.get().get_value();
-    wheels_angular_velocity[1] = registered_wheel_handles_[1].velocity_state.get().get_value();
-    wheels_angular_velocity[2] = registered_wheel_handles_[2].velocity_state.get().get_value();
+    wheels_angular_velocity[0] = registered_wheel_state_ifs_[0].get().get_value();
+    wheels_angular_velocity[1] = registered_wheel_state_ifs_[1].get().get_value();
+    wheels_angular_velocity[2] = registered_wheel_state_ifs_[2].get().get_value();
     try {
       odometry_.update(wheels_angular_velocity, period.seconds());
     } catch(const std::runtime_error& e) {
@@ -410,9 +408,10 @@ controller_interface::return_type OmnidirectionalController::update(
   wheels_angular_velocity = omni_robot_kinematics_.getWheelsAngularVelocities(body_vel_setpoint);
 
   // Set wheels velocities:
-  registered_wheel_handles_[0].velocity_command.get().set_value(wheels_angular_velocity.at(0));
-  registered_wheel_handles_[1].velocity_command.get().set_value(wheels_angular_velocity.at(1));
-  registered_wheel_handles_[2].velocity_command.get().set_value(wheels_angular_velocity.at(2));
+  registered_wheel_cmd_ifs_[0].get().set_value(wheels_angular_velocity.at(0));
+  registered_wheel_cmd_ifs_[1].get().set_value(wheels_angular_velocity.at(1));
+  registered_wheel_cmd_ifs_[2].get().set_value(wheels_angular_velocity.at(2));
+
 
   return controller_interface::return_type::OK;
 }
