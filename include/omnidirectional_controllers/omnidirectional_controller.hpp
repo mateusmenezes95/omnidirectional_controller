@@ -64,13 +64,6 @@ class OmnidirectionalController : public controller_interface::ControllerInterfa
   std::vector<std::string> wheel_names_;
   std::vector<StateInterfaceReferenceWrapper> registered_wheel_state_ifs_;
   std::vector<CommandInterfaceReferenceWrapper> registered_wheel_cmd_ifs_;
-  // struct WheelHandle {
-  //   std::reference_wrapper<const hardware_interface::LoanedStateInterface> velocity_state;
-  //   std::reference_wrapper<hardware_interface::LoanedCommandInterface> velocity_command;
-  // };
-
-  // std::vector<std::string> wheel_names_;
-  // std::vector<WheelHandle> registered_wheel_handles_;
 
   // Default parameters for axebot
   RobotParams robot_params_{0.1, 0.0505, 0.0};
